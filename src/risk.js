@@ -3,6 +3,7 @@ const config = require('./config');
 class RiskManager {
   constructor() {
     this.maxBetUSDC = config.TRADING.MAX_BET_USDC;
+    this.minBetUSDC = config.TRADING.MIN_BET_USDC;
     this.minConfidence = config.TRADING.MIN_CONFIDENCE;
     this.maxDailyLoss = this.maxBetUSDC * 5;      // Max 5x single bet loss per day
     this.maxOpenPositions = 10;
@@ -120,9 +121,14 @@ class RiskManager {
     const kelly = (b * p - (1 - p)) / b;
     const halfKelly = kelly / 2; // Conservative: half Kelly
 
-    // Clamp between 0 and max bet
+    // Clamp between min and max bet
     const betFraction = Math.max(0, Math.min(halfKelly, 0.25)); // Never bet more than 25% of balance
-    const betAmount = Math.min(betFraction * bal, this.maxBetUSDC);
+    let betAmount = Math.min(betFraction * bal, this.maxBetUSDC);
+
+    // Enforce minimum bet — if Kelly says less than min, use min (if balance allows)
+    if (betAmount < this.minBetUSDC && bal >= this.minBetUSDC) {
+      betAmount = this.minBetUSDC;
+    }
 
     return Math.round(betAmount * 100) / 100;
   }

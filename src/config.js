@@ -43,7 +43,8 @@ module.exports = {
 
   // Trading parameters
   TRADING: {
-    MAX_BET_USDC: parseFloat(process.env.MAX_BET_USDC) || 10,
+    MAX_BET_USDC: parseFloat(process.env.MAX_BET_USDC) || 2000,
+    MIN_BET_USDC: parseFloat(process.env.MIN_BET_USDC) || 500,
     MIN_CONFIDENCE: parseFloat(process.env.MIN_CONFIDENCE) || 0.65,
     STRATEGY: process.env.STRATEGY || 'expected_move',
     DRY_RUN: process.env.DRY_RUN !== 'false',
