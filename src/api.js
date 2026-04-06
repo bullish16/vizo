@@ -36,9 +36,20 @@ vizoApi.interceptors.request.use((req) => {
 
 // Response interceptor — handle errors
 vizoApi.interceptors.response.use(
-  (res) => res.data,
+  (res) => {
+    // Log every API response for debugging
+    const url = res.config?.url || 'unknown';
+    if (url.includes('/bet/')) {
+      console.log(`[API] Response for ${url}: code=${res.data?.code}, msg=${res.data?.msg || res.data?.message || 'none'}`);
+    }
+    return res.data;
+  },
   (err) => {
-    if (err.response?.status === 401) {
+    const url = err.config?.url || 'unknown';
+    const status = err.response?.status;
+    const body = err.response?.data;
+    console.error(`[API] HTTP ${status} for ${url}:`, JSON.stringify(body).substring(0, 300));
+    if (status === 401) {
       console.error('[API] Token expired, need re-login');
     }
     return Promise.reject(err);
@@ -211,20 +222,32 @@ async function getPrediction(data) {
 async function marketBet({ market_id_hash, gradient_id, amount, side, address }) {
   const payload = {
     market_id_hash,
-    gradient_id,
-    amount,
-    side,       // 1 = buy (YES direction), -1 = sell (NO direction)
-    address,
+    gradient_id: String(gradient_id),
+    amount: String(amount),
+    side: Number(side),
+    address: address.toLowerCase(),
   };
   console.log(`[API] marketBet payload:`, JSON.stringify(payload));
-  const res = await vizoApi.post(config.ENDPOINTS.BET, payload);
-  console.log(`[API] marketBet response:`, JSON.stringify(res).substring(0, 500));
+  try {
+    const res = await vizoApi.post(config.ENDPOINTS.BET, payload);
+    console.log(`[API] marketBet response:`, JSON.stringify(res).substring(0, 500));
 
-  // Check for empty/null data which indicates the bet wasn't registered
-  if (!res || !res.data) {
-    console.warn(`[API] ⚠️ marketBet returned empty data! Response:`, JSON.stringify(res));
+    // Check for empty/null data which indicates the bet wasn't registered
+    if (!res || (res.code !== undefined && res.code !== 0 && res.code !== 200)) {
+      console.warn(`[API] ⚠️ marketBet returned error code! Response:`, JSON.stringify(res));
+    }
+    if (!res || !res.data) {
+      console.warn(`[API] ⚠️ marketBet returned empty data! Full response:`, JSON.stringify(res));
+    }
+    return res;
+  } catch (err) {
+    const status = err.response?.status;
+    const respData = err.response?.data;
+    console.error(`[API] ❌ marketBet FAILED! Status: ${status}`);
+    console.error(`[API] ❌ Response body:`, JSON.stringify(respData).substring(0, 500));
+    console.error(`[API] ❌ Error message:`, err.message);
+    throw err;
   }
-  return res;
 }
 
 async function betExecuteEncode(type = 'execute') {

@@ -184,14 +184,29 @@ class TradingBot {
 
       // Step 1: Call marketBet to register the bet on the backend
       console.log(`     [BET] Step 1/4: Registering bet on backend...`);
-      const betResult = await api.marketBet({
-        market_id_hash: marketHash,
-        gradient_id: gradientId,
-        amount: String(riskCheck.betSize),
-        side: side,
-        address: walletAddr || '',
-      });
-      console.log(`     [BET] Bet registered:`, JSON.stringify(betResult).substring(0, 300));
+      let betResult;
+      try {
+        betResult = await api.marketBet({
+          market_id_hash: marketHash,
+          gradient_id: gradientId,
+          amount: String(riskCheck.betSize),
+          side: side,
+          address: walletAddr || '',
+        });
+        console.log(`     [BET] Bet registered:`, JSON.stringify(betResult).substring(0, 300));
+      } catch (betApiErr) {
+        console.error(`     [BET] ❌ marketBet API call failed:`, betApiErr.message);
+        if (betApiErr.response?.data) {
+          console.error(`     [BET] ❌ API response:`, JSON.stringify(betApiErr.response.data).substring(0, 500));
+        }
+        throw betApiErr;
+      }
+
+      // Validate the response — if code != 0/200, the bet wasn't registered
+      if (betResult && betResult.code !== undefined && betResult.code !== 0 && betResult.code !== 200) {
+        console.error(`     [BET] ❌ Backend rejected bet: code=${betResult.code}, msg=${betResult.msg || betResult.message}`);
+        throw new Error(`Bet rejected: ${betResult.msg || betResult.message || 'unknown error'} (code: ${betResult.code})`);
+      }
 
       // Step 2: Get the approve encode data (type=0 for approve)
       console.log(`     [BET] Step 2/4: Getting approve tx data...`);
