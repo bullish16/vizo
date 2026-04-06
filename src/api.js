@@ -166,20 +166,26 @@ async function getTransactionHistory(page = 1, pageSize = 20) {
 
 async function getExpectedMove(symbol) {
   try {
-    const res = await axios.get(`${config.API.MARKET_DATA_URL}/${symbol}`);
+    const res = await axios.get(`${config.API.MARKET_DATA_URL}/${symbol}`, { timeout: 5000 });
     return res.data;
   } catch (err) {
-    console.error('[DATA] getExpectedMove error:', err.message);
+    // 404 is normal — not all markets have expected move data
+    if (err.response?.status !== 404) {
+      console.error('[DATA] getExpectedMove error:', err.message);
+    }
     return null;
   }
 }
 
 async function getHistory(symbol) {
   try {
-    const res = await axios.get(`${config.API.HISTORY_URL}/${symbol}`);
+    const res = await axios.get(`${config.API.HISTORY_URL}/${symbol}`, { timeout: 5000 });
     return res.data;
   } catch (err) {
-    console.error('[DATA] getHistory error:', err.message);
+    // 404 is normal — not all markets have history
+    if (err.response?.status !== 404) {
+      console.error('[DATA] getHistory error:', err.message);
+    }
     return null;
   }
 }
@@ -189,9 +195,13 @@ async function getHistory(symbol) {
 async function getPrediction(data) {
   try {
     const res = await predictionApi.post('', data);
+    if (res.data?.detail) return null; // API returned error detail
     return res.data;
   } catch (err) {
-    console.error('[PREDICT] Error:', err.message);
+    // 400/404 is normal — not all markets supported
+    if (err.response?.status !== 400 && err.response?.status !== 404) {
+      console.error('[PREDICT] Error:', err.message);
+    }
     return null;
   }
 }

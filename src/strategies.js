@@ -31,21 +31,23 @@ async function expectedMoveStrategy(market) {
     }
   }
 
-  // 1. Get expected move prediction from VIZO API
-  const emData = await api.getExpectedMove(symbol);
-  if (emData && !emData.error) {
-    signals.push({
-      source: 'expected_move',
-      direction: emData.direction || (emData.expected_move > 0 ? 'YES' : 'NO'),
-      confidence: Math.abs(emData.confidence || emData.probability || 0.5),
-      data: emData,
-    });
-  }
+  // 1. Get expected move prediction from VIZO API (may not exist for all markets)
+  try {
+    const emData = await api.getExpectedMove(symbol);
+    if (emData && !emData.error) {
+      signals.push({
+        source: 'expected_move',
+        direction: emData.direction || (emData.expected_move > 0 ? 'YES' : 'NO'),
+        confidence: Math.abs(emData.confidence || emData.probability || 0.5),
+        data: emData,
+      });
+    }
+  } catch (e) { /* expected move data not available for this market - normal */ }
 
-  // 2. Get prediction from prediction API
+  // 2. Get prediction from prediction API (may not support all markets)
   try {
     const prediction = await api.getPrediction({ symbol, market_id: market.market_id_hash });
-    if (prediction && !prediction.error) {
+    if (prediction && !prediction.error && !prediction.detail) {
       signals.push({
         source: 'prediction_api',
         direction: prediction.prediction === 'up' || prediction.probability > 0.5 ? 'YES' : 'NO',
@@ -53,16 +55,59 @@ async function expectedMoveStrategy(market) {
         data: prediction,
       });
     }
-  } catch (e) { /* prediction API might not have data for all markets */ }
+  } catch (e) { /* prediction API not available for this market - normal */ }
 
-  // 3. Get historical data for technical analysis
+  // 3. Orderbook analysis (works without auth, very reliable)
+  try {
+    const marketHash = market.market_id_hash;
+    if (marketHash) {
+      const [yesBook, noBook] = await Promise.allSettled([
+        api.getOrderbook(`${marketHash}_1`, 10, 'YES'),
+        api.getOrderbook(`${marketHash}_2`, 10, 'NO'),
+      ]);
+
+      const yesData = yesBook.status === 'fulfilled' ? (yesBook.value.data || yesBook.value) : null;
+      const noData = noBook.status === 'fulfilled' ? (noBook.value.data || noBook.value) : null;
+
+      if (yesData?.bids?.length > 0 || yesData?.asks?.length > 0) {
+        const bidVol = (yesData.bids || []).reduce((s, b) => s + parseFloat(b.quantity || 0), 0);
+        const askVol = (yesData.asks || []).reduce((s, a) => s + parseFloat(a.quantity || 0), 0);
+        const bestBid = yesData.bids?.[0] ? parseFloat(yesData.bids[0].price) : 0;
+        const bestAsk = yesData.asks?.[0] ? parseFloat(yesData.asks[0].price) : 100;
+
+        // Price-based signal (prices are in cents, 0-100)
+        const midPrice = (bestBid + bestAsk) / 2;
+        if (midPrice > 0 && midPrice < 100) {
+          signals.push({
+            source: 'orderbook_price',
+            direction: midPrice > 50 ? 'YES' : 'NO',
+            confidence: Math.abs(midPrice - 50) / 50,
+            data: { bestBid, bestAsk, midPrice, bidVol, askVol },
+          });
+        }
+
+        // Volume imbalance signal
+        if (bidVol + askVol > 0) {
+          const imbalance = bidVol / (bidVol + askVol);
+          signals.push({
+            source: 'orderbook_volume',
+            direction: imbalance > 0.55 ? 'YES' : imbalance < 0.45 ? 'NO' : 'NEUTRAL',
+            confidence: Math.min(Math.abs(imbalance - 0.5) * 2, 0.9),
+            data: { bidVol, askVol, imbalance },
+          });
+        }
+      }
+    }
+  } catch (e) { /* orderbook not available */ }
+
+  // 4. Get historical data for technical analysis (may 404)
   try {
     const history = await api.getHistory(symbol);
     if (history?.prices?.length >= 14) {
       const taSignals = runTechnicalAnalysis(history.prices);
       signals.push(...taSignals);
     }
-  } catch (e) { /* no history for some markets */ }
+  } catch (e) { /* no history for this market - normal */ }
 
   return aggregateSignals(signals);
 }
@@ -251,6 +296,8 @@ function aggregateSignals(signals) {
     market_probability: 3.5,
     expected_move: 3,
     prediction_api: 2.5,
+    orderbook_price: 2.5,
+    orderbook_volume: 2,
     orderbook_yes: 2,
     spread_analysis: 1.5,
     ma_crossover: 1.5,
