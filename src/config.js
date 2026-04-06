@@ -24,7 +24,18 @@ module.exports = {
     REFRESH_TOKEN: '/polyStock/login/refreshToken',
     LIST_MARKETS: '/polyStock/market/listMarkets',
     SEARCH_MARKETS: '/polyStock/market/searchMarkets',
+    MARKET_BASE: '/polyStock/market',
     CONTRACT_ADDRESS: '/polyStock/market/contractAddress',
+    // Bet endpoints
+    BET: '/polyStock/bet/bet',
+    BET_EXECUTE_ENCODE: '/polyStock/bet/executeEncode',
+    BET_EXECUTE: '/polyStock/bet/execute',
+    BET_HISTORY: '/polyStock/bet/history',
+    LAST_BET: '/polyStock/bet/lastetBetOrders',
+    BET_STATS: '/polyStock/bet/gradientBetStats',
+    ACTIVITY_RANK: '/polyStock/bet/getActivityRank',
+    // Account
+    ADDRESS_INFO: '/polyStock/login/addressInfo',
     PLACE_ORDER: '/polyStock/order/place',
     CANCEL_ORDER: '/polyStock/order/cancel',
     ORDERBOOK: '/polyStock/order/orderbook',

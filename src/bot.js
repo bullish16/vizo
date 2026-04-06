@@ -89,13 +89,13 @@ class TradingBot {
     console.log(`\n[SCAN #${this.stats.scans}] ${new Date().toISOString()}`);
 
     try {
-      // 1. Fetch available markets
+      // 1. Fetch available markets (POST with filter)
       const marketsRes = await api.listMarkets(1, 50);
-      const markets = marketsRes.data?.list || marketsRes.data || marketsRes.list || [];
+      const markets = marketsRes.data?.markets || marketsRes.markets || [];
 
       if (!Array.isArray(markets) || markets.length === 0) {
-        console.log('[SCAN] No markets available (market might not be open yet)');
-        console.log('[SCAN] Raw response:', JSON.stringify(marketsRes).substring(0, 500));
+        console.log('[SCAN] No markets available');
+        console.log('[SCAN] Raw response:', JSON.stringify(marketsRes).substring(0, 300));
         return;
       }
 
@@ -122,8 +122,8 @@ class TradingBot {
   }
 
   async analyzeMarket(market, balance) {
-    const symbol = market.symbol || market.market_id_hash || market.id;
-    const title = market.title || market.question || market.name || symbol;
+    const symbol = market.token_symbol || market.market_id_hash || market.id;
+    const title = market.description || market.token_symbol || symbol;
 
     try {
       // Run strategy
@@ -157,36 +157,82 @@ class TradingBot {
   }
 
   async executeTrade(market, signal, riskCheck) {
-    const symbol = market.symbol || market.market_id_hash;
-    const gradientId = market.gradient_id || '';
-    const fullSymbol = gradientId ? `${symbol}_${gradientId}` : symbol;
+    const marketHash = market.market_id_hash;
 
-    console.log(`     🔥 Placing order: ${signal.direction} ${riskCheck.betSize} USDC on ${fullSymbol}`);
+    // Find the right gradient_id based on signal direction
+    let gradientId = 1;
+    if (market.gradients_json && market.gradients_json.length > 0) {
+      if (market.is_yes_or_no) {
+        // YES/NO market: YES = gradient 1, NO = gradient 2
+        gradientId = signal.direction === 'YES' ? 1 : 2;
+      } else {
+        // Multi-option: find best matching gradient
+        const labels = market.gradients_json.map(g => g.label.toUpperCase());
+        if (signal.direction === 'YES' || signal.direction === 'UP') gradientId = 1;
+        else if (signal.direction === 'NO' || signal.direction === 'DOWN') gradientId = 2;
+        else gradientId = signal.gradientId || 1;
+      }
+    }
+
+    const side = market.gradients_json?.find(g => g.gradient_id === gradientId)?.direction || 1;
+
+    console.log(`     🔥 Placing bet: ${signal.direction} (gradient ${gradientId}) ${riskCheck.betSize} USDC`);
 
     try {
+      // Method 1: Try orderbook order (CLOB)
+      const orderSymbol = `${marketHash}_${gradientId}`;
       const result = await api.placeOrder({
-        symbol: fullSymbol,
-        side: 1,            // buy
-        type: 2,            // market order
+        symbol: orderSymbol,
+        side: 1,            // 1 = buy
+        type: 2,            // 2 = market order
         price: '',
         quantity: String(riskCheck.betSize),
-        outcome: signal.direction,
+        outcome: signal.direction === 'YES' || signal.direction === 'UP' ? 'YES' : 'NO',
       });
 
       console.log(`     ✅ Order placed! Result:`, JSON.stringify(result).substring(0, 200));
 
       // Track position
       risk.addPosition({
-        symbol: fullSymbol,
+        symbol: market.token_symbol,
+        marketHash,
+        gradientId,
         direction: signal.direction,
         size: riskCheck.betSize,
         confidence: signal.confidence,
       });
 
       this.stats.tradesPlaced++;
-    } catch (err) {
-      console.error(`     ❌ Order failed: ${err.message}`);
-      this.stats.errors++;
+    } catch (orderErr) {
+      console.log(`     ⚠️  CLOB order failed (${orderErr.message}), trying direct bet...`);
+
+      try {
+        // Method 2: Direct bet via marketBet endpoint
+        const walletAddr = require('./wallet').address;
+        const betResult = await api.marketBet({
+          market_id_hash: marketHash,
+          gradient_id: gradientId,
+          amount: String(riskCheck.betSize),
+          side: side,
+          address: walletAddr || '',
+        });
+
+        console.log(`     ✅ Bet placed! Result:`, JSON.stringify(betResult).substring(0, 200));
+
+        risk.addPosition({
+          symbol: market.token_symbol,
+          marketHash,
+          gradientId,
+          direction: signal.direction,
+          size: riskCheck.betSize,
+          confidence: signal.confidence,
+        });
+
+        this.stats.tradesPlaced++;
+      } catch (betErr) {
+        console.error(`     ❌ Bet also failed: ${betErr.message}`);
+        this.stats.errors++;
+      }
     }
   }
 

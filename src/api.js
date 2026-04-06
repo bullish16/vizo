@@ -87,18 +87,23 @@ async function getScore() {
 
 // ==================== MARKETS ====================
 
-async function listMarkets(page = 1, pageSize = 20) {
-  return vizoApi({
-    method: 'GET',
-    url: `${config.ENDPOINTS.LIST_MARKETS}?page=${page}&pageSize=${pageSize}`,
+async function listMarkets(page = 1, pageSize = 50, category = 'trending') {
+  return vizoApi.post(config.ENDPOINTS.LIST_MARKETS, {
+    filter: {
+      status: ['OPEN'],
+      page,
+      page_size: pageSize,
+      ...(category !== 'trending' && { market_categories: [category] }),
+    },
   });
 }
 
 async function searchMarkets(query) {
-  return vizoApi({
-    method: 'GET',
-    url: `${config.ENDPOINTS.SEARCH_MARKETS}?keyword=${encodeURIComponent(query)}`,
-  });
+  return vizoApi.post(config.ENDPOINTS.SEARCH_MARKETS, { keyword: query });
+}
+
+async function getMarketDetail(marketId) {
+  return vizoApi({ method: 'GET', url: `${config.ENDPOINTS.MARKET_BASE}/${marketId}` });
 }
 
 async function getContractAddress() {
@@ -191,6 +196,47 @@ async function getPrediction(data) {
   }
 }
 
+// ==================== BET SYSTEM ====================
+
+async function marketBet({ market_id_hash, gradient_id, amount, side, address }) {
+  return vizoApi.post(config.ENDPOINTS.BET, {
+    market_id_hash,
+    gradient_id,
+    amount,
+    side,       // 1 = buy (YES direction), -1 = sell (NO direction)
+    address,
+  });
+}
+
+async function betExecuteEncode(type = 'execute') {
+  return vizoApi({
+    method: 'GET',
+    url: `${config.ENDPOINTS.BET_EXECUTE_ENCODE}/${type === 'approve' ? 0 : 1}`,
+  });
+}
+
+async function betExecute(data) {
+  return vizoApi.post(config.ENDPOINTS.BET_EXECUTE, {
+    ...data,
+    type: data.type === 'approve' ? 0 : 1,
+  });
+}
+
+async function getBetStats(marketIdHash) {
+  return vizoApi({
+    method: 'GET',
+    url: `${config.ENDPOINTS.BET_STATS}/${marketIdHash}`,
+  });
+}
+
+async function getAddressInfo() {
+  return vizoApi({ method: 'GET', url: config.ENDPOINTS.ADDRESS_INFO });
+}
+
+async function getActivityRank(page = 1, pageCount = 10) {
+  return vizoApi.post(config.ENDPOINTS.ACTIVITY_RANK, { page, pageCount });
+}
+
 module.exports = {
   vizoApi,
   setToken,
@@ -203,6 +249,7 @@ module.exports = {
   getScore,
   listMarkets,
   searchMarkets,
+  getMarketDetail,
   getContractAddress,
   placeOrder,
   cancelOrder,
@@ -214,4 +261,10 @@ module.exports = {
   getExpectedMove,
   getHistory,
   getPrediction,
+  marketBet,
+  betExecuteEncode,
+  betExecute,
+  getBetStats,
+  getAddressInfo,
+  getActivityRank,
 };

@@ -6,12 +6,34 @@ const config = require('./config');
 // Uses VIZO's built-in prediction API + technical analysis
 
 async function expectedMoveStrategy(market) {
-  const symbol = market.symbol || market.market_id_hash;
+  const symbol = market.token_symbol || market.market_id_hash;
   const signals = [];
+
+  // 0. Use on-chain probability from market gradients (most reliable!)
+  if (market.gradients_json?.length > 0) {
+    const yesGradient = market.gradients_json.find(g => 
+      g.label === 'Yes' || g.label === 'UP' || g.gradient_id === 1
+    );
+    const noGradient = market.gradients_json.find(g => 
+      g.label === 'No' || g.label === 'DOWN' || g.gradient_id === 2
+    );
+
+    if (yesGradient && noGradient) {
+      const yesProb = yesGradient.probability || 0.5;
+      const noProb = noGradient.probability || 0.5;
+
+      signals.push({
+        source: 'market_probability',
+        direction: yesProb > noProb ? 'YES' : 'NO',
+        confidence: Math.max(yesProb, noProb),
+        data: { yesProb, noProb, betCount: market.bet_count },
+      });
+    }
+  }
 
   // 1. Get expected move prediction from VIZO API
   const emData = await api.getExpectedMove(symbol);
-  if (emData) {
+  if (emData && !emData.error) {
     signals.push({
       source: 'expected_move',
       direction: emData.direction || (emData.expected_move > 0 ? 'YES' : 'NO'),
@@ -21,22 +43,26 @@ async function expectedMoveStrategy(market) {
   }
 
   // 2. Get prediction from prediction API
-  const prediction = await api.getPrediction({ symbol, market_id: market.market_id_hash });
-  if (prediction) {
-    signals.push({
-      source: 'prediction_api',
-      direction: prediction.prediction === 'up' || prediction.probability > 0.5 ? 'YES' : 'NO',
-      confidence: Math.abs(prediction.probability || prediction.confidence || 0.5),
-      data: prediction,
-    });
-  }
+  try {
+    const prediction = await api.getPrediction({ symbol, market_id: market.market_id_hash });
+    if (prediction && !prediction.error) {
+      signals.push({
+        source: 'prediction_api',
+        direction: prediction.prediction === 'up' || prediction.probability > 0.5 ? 'YES' : 'NO',
+        confidence: Math.abs(prediction.probability || prediction.confidence || 0.5),
+        data: prediction,
+      });
+    }
+  } catch (e) { /* prediction API might not have data for all markets */ }
 
   // 3. Get historical data for technical analysis
-  const history = await api.getHistory(symbol);
-  if (history?.prices?.length >= 14) {
-    const taSignals = runTechnicalAnalysis(history.prices);
-    signals.push(...taSignals);
-  }
+  try {
+    const history = await api.getHistory(symbol);
+    if (history?.prices?.length >= 14) {
+      const taSignals = runTechnicalAnalysis(history.prices);
+      signals.push(...taSignals);
+    }
+  } catch (e) { /* no history for some markets */ }
 
   return aggregateSignals(signals);
 }
@@ -222,6 +248,7 @@ function aggregateSignals(signals) {
 
   // Weighted voting
   const weights = {
+    market_probability: 3.5,
     expected_move: 3,
     prediction_api: 2.5,
     orderbook_yes: 2,
