@@ -7,6 +7,7 @@ class WalletManager {
     this.provider = null;
     this.wallet = null;
     this.address = null;
+    this._approvedSpenders = new Set(); // Track approved spender contracts
   }
 
   initialize() {
@@ -34,6 +35,52 @@ class WalletManager {
     const usdc = new ethers.Contract(config.TOKENS.USDC, erc20Abi, this.provider);
     const balance = await usdc.balanceOf(this.address);
     return ethers.formatUnits(balance, 6);
+  }
+
+  // Check current USDC allowance for a spender
+  async getUSDCAllowance(spenderAddress) {
+    const erc20Abi = ['function allowance(address owner, address spender) view returns (uint256)'];
+    const usdc = new ethers.Contract(config.TOKENS.USDC, erc20Abi, this.provider);
+    const allowance = await usdc.allowance(this.address, spenderAddress);
+    return allowance;
+  }
+
+  // Approve USDC spending for a contract (max approval)
+  async approveUSDC(spenderAddress, amount = ethers.MaxUint256) {
+    console.log(`[WALLET] Approving USDC for spender ${spenderAddress}...`);
+    const erc20Abi = [
+      'function approve(address spender, uint256 amount) returns (bool)',
+      'function allowance(address owner, address spender) view returns (uint256)',
+    ];
+    const usdc = new ethers.Contract(config.TOKENS.USDC, erc20Abi, this.wallet);
+
+    // Check existing allowance first
+    const currentAllowance = await usdc.allowance(this.address, spenderAddress);
+    if (currentAllowance > 0n) {
+      console.log(`[WALLET] Already approved (allowance: ${ethers.formatUnits(currentAllowance, 6)} USDC)`);
+      this._approvedSpenders.add(spenderAddress);
+      return true;
+    }
+
+    const tx = await usdc.approve(spenderAddress, amount);
+    console.log(`[WALLET] Approve tx sent: ${tx.hash}`);
+    const receipt = await tx.wait();
+    console.log(`[WALLET] ✅ USDC approved! Block: ${receipt.blockNumber}`);
+    this._approvedSpenders.add(spenderAddress);
+    return true;
+  }
+
+  // Send a raw/encoded transaction (for bet execute)
+  async sendTransaction(txData) {
+    const tx = await this.wallet.sendTransaction(txData);
+    console.log(`[WALLET] Tx sent: ${tx.hash}`);
+    const receipt = await tx.wait();
+    console.log(`[WALLET] ✅ Tx confirmed! Block: ${receipt.blockNumber}, Gas: ${receipt.gasUsed.toString()}`);
+    return receipt;
+  }
+
+  isApproved(spenderAddress) {
+    return this._approvedSpenders.has(spenderAddress);
   }
 
   // Login to VIZO platform

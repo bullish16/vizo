@@ -178,19 +178,118 @@ class TradingBot {
 
     console.log(`     🔥 Placing bet: ${signal.direction} (gradient ${gradientId}) ${riskCheck.betSize} USDC`);
 
+    // ========== METHOD 1: Direct Bet API (approve → bet → encode → execute) ==========
     try {
-      // Method 1: Try orderbook order (CLOB)
-      const orderSymbol = `${marketHash}_${gradientId}`;
-      const result = await api.placeOrder({
-        symbol: orderSymbol,
-        side: 1,            // 1 = buy
-        type: 2,            // 2 = market order
-        price: '',
-        quantity: String(riskCheck.betSize),
-        outcome: signal.direction === 'YES' || signal.direction === 'UP' ? 'YES' : 'NO',
-      });
+      const walletAddr = wallet.address;
 
-      console.log(`     ✅ Order placed! Result:`, JSON.stringify(result).substring(0, 200));
+      // Step 1: Call marketBet to register the bet on the backend
+      console.log(`     [BET] Step 1/4: Registering bet on backend...`);
+      const betResult = await api.marketBet({
+        market_id_hash: marketHash,
+        gradient_id: gradientId,
+        amount: String(riskCheck.betSize),
+        side: side,
+        address: walletAddr || '',
+      });
+      console.log(`     [BET] Bet registered:`, JSON.stringify(betResult).substring(0, 300));
+
+      // Step 2: Get the approve encode data (type=0 for approve)
+      console.log(`     [BET] Step 2/4: Getting approve tx data...`);
+      const approveEncode = await api.betExecuteEncode('approve');
+      console.log(`     [BET] Approve encode:`, JSON.stringify(approveEncode).substring(0, 300));
+
+      // Step 3: If approve data is returned, send the approve transaction on-chain
+      if (approveEncode?.data) {
+        const approveData = approveEncode.data;
+        const approveTo = approveData.to || approveData.contract_address || approveData.address;
+        const approveCalldata = approveData.data || approveData.calldata || approveData.encode;
+
+        if (approveTo && approveCalldata) {
+          // Check if we already have sufficient allowance
+          const currentAllowance = await wallet.getUSDCAllowance(approveTo);
+          const neededAmount = BigInt(Math.ceil(riskCheck.betSize * 1e6));
+
+          if (currentAllowance < neededAmount) {
+            console.log(`     [BET] Sending approve tx to ${approveTo}...`);
+            const approveTx = await wallet.sendTransaction({
+              to: approveTo,
+              data: approveCalldata,
+              value: approveData.value || '0x0',
+            });
+            console.log(`     [BET] ✅ Approve confirmed!`);
+          } else {
+            console.log(`     [BET] ✅ Already approved (allowance sufficient)`);
+          }
+        } else {
+          // Fallback: approve USDC for the contract directly
+          console.log(`     [BET] No encoded approve data, trying direct USDC approve...`);
+          try {
+            const contractInfo = await api.getContractAddress();
+            const contractAddr = contractInfo?.data?.address || contractInfo?.address;
+            if (contractAddr) {
+              await wallet.approveUSDC(contractAddr);
+            }
+          } catch (approveErr) {
+            console.log(`     [BET] Direct approve skipped: ${approveErr.message}`);
+          }
+        }
+      }
+
+      // Step 4: Get the execute encode data (type=1 for execute) and send it
+      console.log(`     [BET] Step 3/4: Getting execute tx data...`);
+      const executeEncode = await api.betExecuteEncode('execute');
+      console.log(`     [BET] Execute encode:`, JSON.stringify(executeEncode).substring(0, 300));
+
+      if (executeEncode?.data) {
+        const execData = executeEncode.data;
+        const execTo = execData.to || execData.contract_address || execData.address;
+        const execCalldata = execData.data || execData.calldata || execData.encode;
+
+        if (execTo && execCalldata) {
+          console.log(`     [BET] Step 4/4: Sending execute tx to ${execTo}...`);
+          const execReceipt = await wallet.sendTransaction({
+            to: execTo,
+            data: execCalldata,
+            value: execData.value || '0x0',
+          });
+          console.log(`     [BET] ✅ Execute confirmed! Tx: ${execReceipt.hash || execReceipt.transactionHash}`);
+
+          // Report execution back to backend
+          try {
+            await api.betExecute({
+              type: 'execute',
+              tx_hash: execReceipt.hash || execReceipt.transactionHash,
+              market_id_hash: marketHash,
+              gradient_id: gradientId,
+            });
+            console.log(`     [BET] ✅ Backend notified of execution`);
+          } catch (reportErr) {
+            console.log(`     [BET] Backend report: ${reportErr.message} (bet still on-chain)`);
+          }
+        } else {
+          // No encoded tx data — try betExecute directly (some APIs handle it server-side)
+          console.log(`     [BET] No encoded execute data, calling betExecute directly...`);
+          const execResult = await api.betExecute({
+            type: 'execute',
+            market_id_hash: marketHash,
+            gradient_id: gradientId,
+            amount: String(riskCheck.betSize),
+            address: walletAddr,
+          });
+          console.log(`     [BET] ✅ betExecute result:`, JSON.stringify(execResult).substring(0, 300));
+        }
+      } else {
+        // No encode data returned — the bet API might handle everything server-side
+        console.log(`     [BET] No execute encode data returned, trying betExecute directly...`);
+        const execResult = await api.betExecute({
+          type: 'execute',
+          market_id_hash: marketHash,
+          gradient_id: gradientId,
+          amount: String(riskCheck.betSize),
+          address: walletAddr,
+        });
+        console.log(`     [BET] ✅ betExecute result:`, JSON.stringify(execResult).substring(0, 300));
+      }
 
       // Track position
       risk.addPosition({
@@ -203,21 +302,22 @@ class TradingBot {
       });
 
       this.stats.tradesPlaced++;
-    } catch (orderErr) {
-      console.log(`     ⚠️  CLOB order failed (${orderErr.message}), trying direct bet...`);
+    } catch (betErr) {
+      console.log(`     ⚠️  Bet flow failed (${betErr.message}), trying CLOB order fallback...`);
 
+      // ========== METHOD 2: CLOB Order Fallback ==========
       try {
-        // Method 2: Direct bet via marketBet endpoint
-        const walletAddr = require('./wallet').address;
-        const betResult = await api.marketBet({
-          market_id_hash: marketHash,
-          gradient_id: gradientId,
-          amount: String(riskCheck.betSize),
-          side: side,
-          address: walletAddr || '',
+        const orderSymbol = `${marketHash}_${gradientId}`;
+        const result = await api.placeOrder({
+          symbol: orderSymbol,
+          side: 1,            // 1 = buy
+          type: 2,            // 2 = market order
+          price: '',
+          quantity: String(riskCheck.betSize),
+          outcome: signal.direction === 'YES' || signal.direction === 'UP' ? 'YES' : 'NO',
         });
 
-        console.log(`     ✅ Bet placed! Result:`, JSON.stringify(betResult).substring(0, 200));
+        console.log(`     ✅ CLOB Order placed! Result:`, JSON.stringify(result).substring(0, 200));
 
         risk.addPosition({
           symbol: market.token_symbol,
@@ -229,8 +329,8 @@ class TradingBot {
         });
 
         this.stats.tradesPlaced++;
-      } catch (betErr) {
-        console.error(`     ❌ Bet also failed: ${betErr.message}`);
+      } catch (orderErr) {
+        console.error(`     ❌ All methods failed: ${orderErr.message}`);
         this.stats.errors++;
       }
     }

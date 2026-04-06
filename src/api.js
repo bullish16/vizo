@@ -209,27 +209,44 @@ async function getPrediction(data) {
 // ==================== BET SYSTEM ====================
 
 async function marketBet({ market_id_hash, gradient_id, amount, side, address }) {
-  return vizoApi.post(config.ENDPOINTS.BET, {
+  const payload = {
     market_id_hash,
     gradient_id,
     amount,
     side,       // 1 = buy (YES direction), -1 = sell (NO direction)
     address,
-  });
+  };
+  console.log(`[API] marketBet payload:`, JSON.stringify(payload));
+  const res = await vizoApi.post(config.ENDPOINTS.BET, payload);
+  console.log(`[API] marketBet response:`, JSON.stringify(res).substring(0, 500));
+
+  // Check for empty/null data which indicates the bet wasn't registered
+  if (!res || !res.data) {
+    console.warn(`[API] ⚠️ marketBet returned empty data! Response:`, JSON.stringify(res));
+  }
+  return res;
 }
 
 async function betExecuteEncode(type = 'execute') {
-  return vizoApi({
+  const typeCode = type === 'approve' ? 0 : 1;
+  console.log(`[API] betExecuteEncode type=${type} (code=${typeCode})`);
+  const res = await vizoApi({
     method: 'GET',
-    url: `${config.ENDPOINTS.BET_EXECUTE_ENCODE}/${type === 'approve' ? 0 : 1}`,
+    url: `${config.ENDPOINTS.BET_EXECUTE_ENCODE}/${typeCode}`,
   });
+  console.log(`[API] betExecuteEncode response:`, JSON.stringify(res).substring(0, 500));
+  return res;
 }
 
 async function betExecute(data) {
-  return vizoApi.post(config.ENDPOINTS.BET_EXECUTE, {
+  const typeCode = data.type === 'approve' ? 0 : 1;
+  console.log(`[API] betExecute type=${data.type} (code=${typeCode})`);
+  const res = await vizoApi.post(config.ENDPOINTS.BET_EXECUTE, {
     ...data,
-    type: data.type === 'approve' ? 0 : 1,
+    type: typeCode,
   });
+  console.log(`[API] betExecute response:`, JSON.stringify(res).substring(0, 500));
+  return res;
 }
 
 async function getBetStats(marketIdHash) {
