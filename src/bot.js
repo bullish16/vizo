@@ -174,9 +174,13 @@ class TradingBot {
       }
     }
 
-    const side = market.gradients_json?.find(g => g.gradient_id === gradientId)?.direction || 1;
+    const gradientMatch = market.gradients_json?.find(g => g.gradient_id === gradientId);
+    const side = gradientMatch?.direction || 1;
 
-    console.log(`     🔥 Placing bet: ${signal.direction} (gradient ${gradientId}) ${riskCheck.betSize} USDC`);
+    console.log(`     🔥 Placing bet: ${signal.direction} (gradient ${gradientId}, side ${side}) ${riskCheck.betSize} USDC`);
+    console.log(`     [DEBUG] market_id_hash: ${marketHash}`);
+    console.log(`     [DEBUG] gradients_json:`, JSON.stringify(market.gradients_json || []).substring(0, 500));
+    console.log(`     [DEBUG] wallet address: ${wallet.address}`);
 
     // ========== METHOD 1: Direct Bet API (approve → bet → encode → execute) ==========
     try {

@@ -218,6 +218,7 @@ async function getPrediction(data) {
 }
 
 // ==================== BET SYSTEM ====================
+// These use raw axios to bypass interceptor and get full control over responses
 
 async function marketBet({ market_id_hash, gradient_id, amount, side, address }) {
   const payload = {
@@ -225,51 +226,99 @@ async function marketBet({ market_id_hash, gradient_id, amount, side, address })
     gradient_id: String(gradient_id),
     amount: String(amount),
     side: Number(side),
-    address: address.toLowerCase(),
+    address: address ? address.toLowerCase() : '',
   };
+  console.log(`[API] marketBet → POST ${config.ENDPOINTS.BET}`);
   console.log(`[API] marketBet payload:`, JSON.stringify(payload));
-  try {
-    const res = await vizoApi.post(config.ENDPOINTS.BET, payload);
-    console.log(`[API] marketBet response:`, JSON.stringify(res).substring(0, 500));
 
-    // Check for empty/null data which indicates the bet wasn't registered
-    if (!res || (res.code !== undefined && res.code !== 0 && res.code !== 200)) {
-      console.warn(`[API] ⚠️ marketBet returned error code! Response:`, JSON.stringify(res));
-    }
-    if (!res || !res.data) {
-      console.warn(`[API] ⚠️ marketBet returned empty data! Full response:`, JSON.stringify(res));
-    }
-    return res;
+  try {
+    const res = await axios.post(
+      `${config.API.BASE_URL}${config.ENDPOINTS.BET}`,
+      payload,
+      {
+        timeout: 30000,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(jwtToken ? { Authorization: `Bearer ${jwtToken}` } : {}),
+        },
+      }
+    );
+    console.log(`[API] marketBet HTTP ${res.status}`);
+    console.log(`[API] marketBet response body:`, JSON.stringify(res.data).substring(0, 800));
+    return res.data;
   } catch (err) {
-    const status = err.response?.status;
-    const respData = err.response?.data;
-    console.error(`[API] ❌ marketBet FAILED! Status: ${status}`);
-    console.error(`[API] ❌ Response body:`, JSON.stringify(respData).substring(0, 500));
-    console.error(`[API] ❌ Error message:`, err.message);
+    console.error(`[API] ❌ marketBet FAILED!`);
+    if (err.response) {
+      console.error(`[API] ❌ HTTP ${err.response.status}`);
+      console.error(`[API] ❌ Body:`, JSON.stringify(err.response.data).substring(0, 800));
+    } else if (err.code) {
+      console.error(`[API] ❌ Network error: ${err.code} - ${err.message}`);
+    } else {
+      console.error(`[API] ❌ Error:`, err.message);
+    }
     throw err;
   }
 }
 
 async function betExecuteEncode(type = 'execute') {
   const typeCode = type === 'approve' ? 0 : 1;
-  console.log(`[API] betExecuteEncode type=${type} (code=${typeCode})`);
-  const res = await vizoApi({
-    method: 'GET',
-    url: `${config.ENDPOINTS.BET_EXECUTE_ENCODE}/${typeCode}`,
-  });
-  console.log(`[API] betExecuteEncode response:`, JSON.stringify(res).substring(0, 500));
-  return res;
+  console.log(`[API] betExecuteEncode → GET type=${type} (code=${typeCode})`);
+
+  try {
+    const res = await axios.get(
+      `${config.API.BASE_URL}${config.ENDPOINTS.BET_EXECUTE_ENCODE}/${typeCode}`,
+      {
+        timeout: 30000,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(jwtToken ? { Authorization: `Bearer ${jwtToken}` } : {}),
+        },
+      }
+    );
+    console.log(`[API] betExecuteEncode HTTP ${res.status}`);
+    console.log(`[API] betExecuteEncode body:`, JSON.stringify(res.data).substring(0, 800));
+    return res.data;
+  } catch (err) {
+    console.error(`[API] ❌ betExecuteEncode FAILED!`);
+    if (err.response) {
+      console.error(`[API] ❌ HTTP ${err.response.status}:`, JSON.stringify(err.response.data).substring(0, 500));
+    } else {
+      console.error(`[API] ❌ Error:`, err.message);
+    }
+    throw err;
+  }
 }
 
 async function betExecute(data) {
   const typeCode = data.type === 'approve' ? 0 : 1;
-  console.log(`[API] betExecute type=${data.type} (code=${typeCode})`);
-  const res = await vizoApi.post(config.ENDPOINTS.BET_EXECUTE, {
-    ...data,
-    type: typeCode,
-  });
-  console.log(`[API] betExecute response:`, JSON.stringify(res).substring(0, 500));
-  return res;
+  const payload = { ...data, type: typeCode };
+  console.log(`[API] betExecute → POST type=${data.type} (code=${typeCode})`);
+  console.log(`[API] betExecute payload:`, JSON.stringify(payload).substring(0, 500));
+
+  try {
+    const res = await axios.post(
+      `${config.API.BASE_URL}${config.ENDPOINTS.BET_EXECUTE}`,
+      payload,
+      {
+        timeout: 30000,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(jwtToken ? { Authorization: `Bearer ${jwtToken}` } : {}),
+        },
+      }
+    );
+    console.log(`[API] betExecute HTTP ${res.status}`);
+    console.log(`[API] betExecute body:`, JSON.stringify(res.data).substring(0, 800));
+    return res.data;
+  } catch (err) {
+    console.error(`[API] ❌ betExecute FAILED!`);
+    if (err.response) {
+      console.error(`[API] ❌ HTTP ${err.response.status}:`, JSON.stringify(err.response.data).substring(0, 500));
+    } else {
+      console.error(`[API] ❌ Error:`, err.message);
+    }
+    throw err;
+  }
 }
 
 async function getBetStats(marketIdHash) {

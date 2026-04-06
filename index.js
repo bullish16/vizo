@@ -1,6 +1,16 @@
 #!/usr/bin/env node
 require('dotenv').config();
 
+// Catch any unhandled errors so the process doesn't silently die
+process.on('unhandledRejection', (err) => {
+  console.error('[FATAL] Unhandled promise rejection:', err?.message || err);
+  if (err?.stack) console.error(err.stack);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught exception:', err?.message || err);
+  if (err?.stack) console.error(err.stack);
+});
+
 const TradingBot = require('./src/bot');
 
 const COMMANDS = {
